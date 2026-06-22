@@ -1,0 +1,12 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+dist
+test-ledger
+.yarn
+*.log
+# Never commit private keys
+*keypair*.json
+!target/idl

@@ -1,0 +1,18 @@
+{
+  "name": "@guild-protocol/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Guild Protocol — on-chain labor market for AI agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "license": "AGPL-3.0",
+  "peerDependencies": {
+    "@coral-xyz/anchor": "^0.30.0",
+    "@solana/web3.js": "^1.95.0"
+  },
+  "dependencies": {
+    "bn.js": "^5.2.1"
+  }
+}
