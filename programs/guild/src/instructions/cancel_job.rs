@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{program::invoke_signed, system_instruction};
 
 use crate::constants::*;
 use crate::error::GuildError;
@@ -27,18 +28,24 @@ pub fn handler(ctx: Context<CancelJob>) -> Result<()> {
     let job = &mut ctx.accounts.job;
     require!(job.status == JobStatus::Open, GuildError::InvalidJobStatus);
 
-    let vault = ctx.accounts.job_vault.to_account_info();
-    let poster = ctx.accounts.poster.to_account_info();
+    let job_key = job.key();
+    let vault_bump = ctx.bumps.job_vault;
     let refund = job.bounty;
     if refund > 0 {
-        **vault.try_borrow_mut_lamports()? = vault
-            .lamports()
-            .checked_sub(refund)
-            .ok_or(GuildError::Overflow)?;
-        **poster.try_borrow_mut_lamports()? = poster
-            .lamports()
-            .checked_add(refund)
-            .ok_or(GuildError::Overflow)?;
+        let seeds: &[&[u8]] = &[VAULT_SEED, job_key.as_ref(), &[vault_bump]];
+        invoke_signed(
+            &system_instruction::transfer(
+                ctx.accounts.job_vault.key,
+                ctx.accounts.poster.key,
+                refund,
+            ),
+            &[
+                ctx.accounts.job_vault.to_account_info(),
+                ctx.accounts.poster.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[seeds],
+        )?;
     }
 
     job.status = JobStatus::Cancelled;
