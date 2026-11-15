@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{program::invoke_signed, system_instruction};
 
 use crate::constants::*;
 use crate::error::GuildError;
@@ -51,19 +52,25 @@ pub struct ReviewJob<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Move lamports out of a system-owned PDA by direct balance mutation.
-fn pay_from_vault(vault: &AccountInfo, to: &AccountInfo, amount: u64) -> Result<()> {
+/// Move lamports out of a system-owned PDA with a signed system transfer.
+/// Direct lamport mutation is rejected by the runtime because the vault is
+/// owned by the System program, not this program
+/// ("instruction spent from the balance of an account it does not own").
+fn pay_from_vault<'info>(
+    vault: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    amount: u64,
+    seeds: &[&[u8]],
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
     }
-    **vault.try_borrow_mut_lamports()? = vault
-        .lamports()
-        .checked_sub(amount)
-        .ok_or(GuildError::Overflow)?;
-    **to.try_borrow_mut_lamports()? = to
-        .lamports()
-        .checked_add(amount)
-        .ok_or(GuildError::Overflow)?;
+    invoke_signed(
+        &system_instruction::transfer(vault.key, to.key, amount),
+        &[vault.clone(), to.clone(), system_program.clone()],
+        &[seeds],
+    )?;
     Ok(())
 }
 
@@ -80,6 +87,13 @@ fn promote(reputation: u64) -> TrustLevel {
 }
 
 pub fn handler(ctx: Context<ReviewJob>, approve: bool) -> Result<()> {
+    let job_key = ctx.accounts.job.key();
+    let worker_key = ctx.accounts.worker.key();
+    let job_vault_bump = ctx.bumps.job_vault;
+    let worker_vault_bump = ctx.bumps.worker_vault;
+    let job_vault_seeds: &[&[u8]] = &[VAULT_SEED, job_key.as_ref(), &[job_vault_bump]];
+    let worker_vault_seeds: &[&[u8]] = &[VAULT_SEED, worker_key.as_ref(), &[worker_vault_bump]];
+
     let job = &mut ctx.accounts.job;
     require!(job.status == JobStatus::Submitted, GuildError::InvalidJobStatus);
 
@@ -105,12 +119,16 @@ pub fn handler(ctx: Context<ReviewJob>, approve: bool) -> Result<()> {
         pay_from_vault(
             &ctx.accounts.job_vault.to_account_info(),
             &ctx.accounts.worker_wallet.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
             payout,
+            job_vault_seeds,
         )?;
         pay_from_vault(
             &ctx.accounts.job_vault.to_account_info(),
             &ctx.accounts.treasury.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
             fee,
+            job_vault_seeds,
         )?;
 
         worker.jobs_completed = worker.jobs_completed.checked_add(1).ok_or(GuildError::Overflow)?;
@@ -127,7 +145,9 @@ pub fn handler(ctx: Context<ReviewJob>, approve: bool) -> Result<()> {
         pay_from_vault(
             &ctx.accounts.worker_vault.to_account_info(),
             &ctx.accounts.treasury.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
             stake,
+            worker_vault_seeds,
         )?;
         worker.bond = worker.bond.checked_sub(stake).ok_or(GuildError::Overflow)?;
         worker.jobs_slashed = worker.jobs_slashed.checked_add(1).ok_or(GuildError::Overflow)?;
@@ -138,7 +158,9 @@ pub fn handler(ctx: Context<ReviewJob>, approve: bool) -> Result<()> {
         pay_from_vault(
             &ctx.accounts.job_vault.to_account_info(),
             &ctx.accounts.poster_wallet.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
             bounty,
+            job_vault_seeds,
         )?;
 
         job.status = JobStatus::Rejected;
